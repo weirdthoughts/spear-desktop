@@ -8,9 +8,20 @@ type Shape = Point & {
   angle: number;
   done?: boolean;
   motif?: number;
+  vx?: number;
+  vy?: number;
+  drift?: number;
+  pushed?: boolean;
+  waveId?: number;
 };
 type Tail = Point & { age: number };
-type Particle = Point & { vx: number; vy: number; age: number; red: boolean };
+type Particle = Point & {
+  vx: number;
+  vy: number;
+  age: number;
+  red: boolean;
+  hue?: number;
+};
 export function createCollector(onPulse: () => void = () => {}) {
   const run = {
     x: 0.5,
@@ -23,6 +34,9 @@ export function createCollector(onPulse: () => void = () => {}) {
     combo: 0,
     gathered: 0,
     pickupFlash: 0,
+    celebration: 0,
+    celebrationPower: 0,
+    celebrationBurst: 0,
     explosion: null as (Point & { age: number }) | null,
     invulnerable: 0,
     respawn: 0,
@@ -38,8 +52,10 @@ export function createCollector(onPulse: () => void = () => {}) {
     objects: [] as Shape[],
     tail: [] as Tail[],
     particles: [] as Particle[],
-    waves: [] as (Point & { age: number; radius: number })[],
+    waves: [] as (Point & { age: number; radius: number; id: number })[],
+    blooms: [] as (Point & { age: number; radius: number; hue: number })[],
   };
+  let waveSequence = 0;
   let width = 960,
     height = 600;
   const clamp = (v: number, a: number, b: number) =>
@@ -54,7 +70,7 @@ export function createCollector(onPulse: () => void = () => {}) {
         Math.min(0.035, p.age * 0.035),
     y: p.y,
   });
-  function burst(x: number, y: number, red = false, count = 12) {
+  function burst(x: number, y: number, red = false, count = 12, hue = 170) {
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2,
         v = 0.04 + Math.random() * (red ? 0.45 : 0.17);
@@ -65,6 +81,7 @@ export function createCollector(onPulse: () => void = () => {}) {
         vy: Math.sin(a) * v,
         age: 0,
         red,
+        hue,
       });
     }
   }
@@ -91,7 +108,9 @@ export function createCollector(onPulse: () => void = () => {}) {
       (o.radius < 58 ? 30 : 10) * Math.min(5, 1 + Math.floor(run.combo / 15));
     run.best = Math.max(run.best, run.score);
     run.mass = Math.min(16, run.mass + 0.21);
-    burst(o.x, o.y);
+    burst(o.x, o.y, false, 28, o.hue);
+    run.blooms.push({ x: o.x, y: o.y, age: 0, radius: o.radius, hue: o.hue });
+    run.blooms = run.blooms.slice(-24);
   }
   function hit(o: Shape) {
     o.done = true;
@@ -100,7 +119,7 @@ export function createCollector(onPulse: () => void = () => {}) {
     die();
   }
   function release() {
-    if (run.respawn || run.cooldown) {
+    if (run.respawn || run.cooldown || run.celebration) {
       run.charge = 0;
       return;
     }
@@ -108,6 +127,7 @@ export function createCollector(onPulse: () => void = () => {}) {
       x: run.x,
       y: run.y,
       age: 0,
+      id: ++waveSequence,
       radius: 0.33 * Math.min(width, height),
     });
     run.cooldown = 2.7;
@@ -129,6 +149,8 @@ export function createCollector(onPulse: () => void = () => {}) {
     );
   }
   function beat(band: number, energy: number) {
+    if (run.celebration > 0) return;
+    const unlocked = Math.min(8, 4 + Math.max(0, trailCount() - 1));
     const i = run.sequence++,
       complex = energy > 0.22,
       x = clamp(
@@ -140,8 +162,8 @@ export function createCollector(onPulse: () => void = () => {}) {
       x,
       y: -0.06,
       radius: complex ? 43 + (i % 3) * 7 : 72 + (i % 3) * 10,
-      hue: [315, 45, 190, 135][i % 4] + band * 2,
-      motif: i % 4,
+      hue: [315, 45, 190, 135, 195, 275, 30, 165][i % unlocked] + band * 2,
+      motif: i % unlocked,
       sides: complex ? 5 : 3 + (i % 4),
       hazard: false,
       angle: i * 0.6,
@@ -156,7 +178,12 @@ export function createCollector(onPulse: () => void = () => {}) {
       run.objects.push({
         x: clamp(x + (x > 0.5 ? -0.32 : 0.32), 0.08, 0.92),
         y: -0.12,
-        radius: 65,
+        radius: trailCount() >= 5 && i % 2 === 0 ? 90 : 65,
+        motif: trailCount() >= 5 && i % 2 === 0 ? 1 : 0,
+        drift:
+          trailCount() >= 3
+            ? (i % 2 ? -1 : 1) * (0.06 + trailCount() * 0.008)
+            : 0,
         hue: 0,
         sides: 8,
         hazard: true,
@@ -186,6 +213,9 @@ export function createCollector(onPulse: () => void = () => {}) {
       combo: 0,
       gathered: 0,
       pickupFlash: 0,
+      celebration: 0,
+      celebrationPower: 0,
+      celebrationBurst: 0,
       explosion: null,
       invulnerable: 1.5,
       respawn: 0,
@@ -202,7 +232,18 @@ export function createCollector(onPulse: () => void = () => {}) {
       tail: [],
       particles: [],
       waves: [],
+      blooms: [],
     });
+  }
+  function nextTrack(completed: boolean) {
+    const power = trailCount();
+    const survived = run.respawn === 0 && run.mass > 0;
+    reset();
+    if (completed && survived) {
+      run.celebration = 3;
+      run.celebrationPower = power;
+      run.invulnerable = 4.5;
+    }
   }
   function step(
     dt: number,
@@ -217,6 +258,26 @@ export function createCollector(onPulse: () => void = () => {}) {
       return;
     }
     run.time += dt;
+    if (run.celebration > 0) {
+      run.celebration = Math.max(0, run.celebration - dt);
+      run.celebrationBurst -= dt;
+      if (run.celebrationBurst <= 0) {
+        const hue = (run.time * 170) % 360;
+        const x = 0.15 + Math.random() * 0.7,
+          y = 0.15 + Math.random() * 0.45;
+        burst(x, y, false, 30 + run.celebrationPower * 6, hue);
+        run.blooms.push({
+          x,
+          y,
+          age: 0,
+          radius: 50 + run.celebrationPower * 5,
+          hue,
+        });
+        run.celebrationBurst = 0.55 - run.celebrationPower * 0.035;
+      }
+    }
+    for (const bloom of run.blooms) bloom.age += dt;
+    run.blooms = run.blooms.filter((b) => b.age < 0.85).slice(-24);
     run.pickupFlash = Math.max(0, run.pickupFlash - dt * 4);
     if (run.explosion && (run.explosion.age += dt) > 1.3) run.explosion = null;
     run.invulnerable = Math.max(0, run.invulnerable - dt);
@@ -251,7 +312,14 @@ export function createCollector(onPulse: () => void = () => {}) {
     run.held = held;
     for (const w of run.waves) w.age += dt;
     for (const o of run.objects) {
-      o.y += run.speed * dt;
+      o.x += ((o.vx ?? 0) + (o.drift ?? 0)) * dt;
+      o.y += (run.speed + (o.vy ?? 0)) * dt;
+      o.vx = (o.vx ?? 0) * Math.exp(-dt * 2.3);
+      o.vy = (o.vy ?? 0) * Math.exp(-dt * 2.3);
+      if (o.drift && (o.x < 0.1 || o.x > 0.9)) {
+        o.drift *= -1;
+        o.x = clamp(o.x, 0.1, 0.9);
+      }
       o.angle += dt * 0.45;
       if (!run.respawn) {
         if (
@@ -262,17 +330,23 @@ export function createCollector(onPulse: () => void = () => {}) {
           if (o.hazard) hit(o);
           else collect(o);
         }
-        for (const w of run.waves)
+        for (const w of run.waves) {
+          const dx = (o.x - w.x) * width,
+            dy = (o.y - w.y) * height;
+          const distance = Math.hypot(dx, dy);
           if (
-            Math.hypot((o.x - w.x) * width, (o.y - w.y) * height) <
-            w.radius * Math.min(1, w.age / 0.5) + o.radius
+            !o.done &&
+            o.waveId !== w.id &&
+            distance < w.radius * Math.min(1, w.age / 0.5) + o.radius
           ) {
-            if (o.hazard) {
-              o.done = true;
-              burst(o.x, o.y, true, 18);
-            } else collect(o);
-            break;
+            const angle = distance > 0.001 ? Math.atan2(dy, dx) : -Math.PI / 2;
+            // A single impulse per wave. Neither collect nor destroy anything.
+            o.vx = (Math.cos(angle) * 500) / width;
+            o.vy = (Math.sin(angle) * 500) / height;
+            o.waveId = w.id;
+            o.pushed = true;
           }
+        }
         // Every visible branch collects colors and safely detonates red mines.
         if (!o.done && !run.respawn)
           for (let branch = 0; branch < trailCount() && !o.done; branch++)
@@ -290,7 +364,7 @@ export function createCollector(onPulse: () => void = () => {}) {
       }
       if (!o.done && o.y - o.radius / height > 1) {
         o.done = true;
-        if (!o.hazard && !run.respawn) {
+        if (!o.hazard && !run.respawn && !o.pushed) {
           run.score -= 15;
           run.combo = 0;
           // A missed collectible costs score only. Only red mines damage the core.
@@ -315,7 +389,12 @@ export function createCollector(onPulse: () => void = () => {}) {
   function draw(ctx: CanvasRenderingContext2D, w: number, h: number) {
     width = w;
     height = h;
-    const dot = (x: number, y: number, r: number, color: string) => {
+    const dot = (
+      x: number,
+      y: number,
+      r: number,
+      color: string | CanvasGradient,
+    ) => {
       ctx.beginPath();
       ctx.arc(x * w, y * h, r, 0, Math.PI * 2);
       ctx.fillStyle = color;
@@ -356,6 +435,29 @@ export function createCollector(onPulse: () => void = () => {}) {
           -r * 0.1,
         );
         ctx.bezierCurveTo(r * 0.7, r * 0.3, r * 0.3, r * 0.6, 0, r * 0.85);
+      } else if (!o.hazard && (o.motif === 4 || o.motif === 5)) {
+        ctx.arc(0, 0, r * 0.9, 0, Math.PI * 2);
+      } else if (!o.hazard && o.motif === 6) {
+        ctx.roundRect(-r, -r * 0.65, r * 2, r * 1.3, r * 0.18);
+      } else if (!o.hazard && o.motif === 7) {
+        ctx.ellipse(
+          -r * 0.28,
+          r * 0.48,
+          r * 0.34,
+          r * 0.22,
+          -0.3,
+          0,
+          Math.PI * 2,
+        );
+      } else if (o.hazard && o.motif === 1) {
+        // Armored, jagged diamond. Its circular hit area stays clear and readable.
+        for (let i = 0; i < 16; i++) {
+          const a = (i * Math.PI) / 8;
+          const length = r * (i % 4 === 0 ? 1 : 0.65);
+          i
+            ? ctx.lineTo(Math.cos(a) * length, Math.sin(a) * length)
+            : ctx.moveTo(length, 0);
+        }
       } else if (!o.hazard && o.motif === 3) {
         // Four soft lobes form a clover, distinct from the sharp hazards.
         for (let i = 0; i <= 100; i++) {
@@ -382,7 +484,46 @@ export function createCollector(onPulse: () => void = () => {}) {
       ctx.strokeStyle = o.hazard ? '#ff627f' : `hsl(${o.hue},90%,78%)`;
       ctx.lineWidth = 2.5;
       ctx.stroke();
-      if (o.hazard) {
+      if (!o.hazard && (o.motif === 4 || o.motif === 5)) {
+        for (const scale of o.motif === 5
+          ? [0.18, 0.35, 0.55, 0.72]
+          : [0.16, 0.25, 0.75]) {
+          ctx.beginPath();
+          ctx.arc(0, 0, r * scale, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        if (o.motif === 4) {
+          ctx.fillStyle = '#ffffff55';
+          ctx.beginPath();
+          ctx.moveTo(r * 0.24, 0);
+          ctx.lineTo(r * 0.8, -r * 0.3);
+          ctx.arc(0, 0, r * 0.85, -0.35, 0.05);
+          ctx.closePath();
+          ctx.fill();
+        }
+      } else if (!o.hazard && o.motif === 6) {
+        ctx.beginPath();
+        ctx.roundRect(-r * 0.75, -r * 0.35, r * 1.5, r * 0.55, r * 0.12);
+        ctx.stroke();
+        for (const x of [-0.45, 0.45]) {
+          ctx.beginPath();
+          ctx.arc(x * r, -r * 0.08, r * 0.16, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.6, r * 0.58);
+        ctx.lineTo(-r * 0.4, r * 0.3);
+        ctx.lineTo(r * 0.4, r * 0.3);
+        ctx.lineTo(r * 0.6, r * 0.58);
+        ctx.stroke();
+      } else if (!o.hazard && o.motif === 7) {
+        ctx.lineWidth = r * 0.12;
+        ctx.beginPath();
+        ctx.moveTo(0, r * 0.45);
+        ctx.lineTo(0, -r * 0.8);
+        ctx.bezierCurveTo(r * 0.1, -r * 0.4, r * 0.85, -r * 0.5, r * 0.4, 0);
+        ctx.stroke();
+      } else if (o.hazard) {
         ctx.beginPath();
         ctx.moveTo(-r * 0.2, -r * 0.2);
         ctx.lineTo(r * 0.2, r * 0.2);
@@ -422,18 +563,54 @@ export function createCollector(onPulse: () => void = () => {}) {
       }
     }
     for (const wave of run.waves) {
-      ctx.globalAlpha = 1 - wave.age / 0.75;
-      ctx.beginPath();
-      ctx.arc(
-        wave.x * w,
-        wave.y * h,
-        wave.radius * Math.min(1, wave.age / 0.5),
+      const fade = Math.max(0, 1 - wave.age / 0.75);
+      const front = wave.radius * Math.min(1, wave.age / 0.5);
+      // Layered radial waveform, using the current music energy for its ripples.
+      for (let layer = 0; layer < 4; layer++) {
+        ctx.beginPath();
+        for (let i = 0; i <= 160; i++) {
+          const angle = (i / 160) * Math.PI * 2;
+          const ripple =
+            Math.sin(angle * 18 + run.time * 12 + layer) *
+            (3 + run.energy * 12) *
+            fade;
+          const radius = Math.max(0, front - layer * 12 + ripple);
+          const x = wave.x * w + Math.cos(angle) * radius,
+            y = wave.y * h + Math.sin(angle) * radius;
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        }
+        ctx.strokeStyle = `hsla(${175 + layer * 22},100%,80%,${fade * (0.8 - layer * 0.15)})`;
+        ctx.lineWidth = layer === 0 ? 4 : 2;
+        ctx.stroke();
+      }
+    }
+    for (const bloom of run.blooms) {
+      const fade = 1 - bloom.age / 0.85;
+      const radius = bloom.radius * (0.4 + bloom.age * 1.5);
+      const gradient = ctx.createRadialGradient(
+        bloom.x * w,
+        bloom.y * h,
         0,
-        Math.PI * 2,
+        bloom.x * w,
+        bloom.y * h,
+        radius,
       );
-      ctx.strokeStyle = '#d5fff2';
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      gradient.addColorStop(0, `hsla(${bloom.hue},100%,85%,${fade * 0.55})`);
+      gradient.addColorStop(1, `hsla(${bloom.hue},100%,65%,0)`);
+      dot(bloom.x, bloom.y, radius, gradient);
+      for (let i = 0; i < 8; i++) {
+        const a = (i * Math.PI) / 4 + bloom.age;
+        const x = bloom.x * w + Math.cos(a) * radius,
+          y = bloom.y * h + Math.sin(a) * radius;
+        ctx.strokeStyle = `hsla(${bloom.hue},100%,85%,${fade})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x - 6 * fade, y);
+        ctx.lineTo(x + 6 * fade, y);
+        ctx.moveTo(x, y - 6 * fade);
+        ctx.lineTo(x, y + 6 * fade);
+        ctx.stroke();
+      }
     }
     ctx.globalAlpha = 1;
     if (run.charge > 0) {
@@ -453,7 +630,12 @@ export function createCollector(onPulse: () => void = () => {}) {
     }
     for (const k of run.particles) {
       ctx.globalAlpha = 1 - k.age / 0.9;
-      dot(k.x, k.y, k.red ? 3 : 2, k.red ? '#ff7488' : '#baffec');
+      dot(
+        k.x,
+        k.y,
+        k.red ? 3 : 3.5,
+        k.red ? '#ff7488' : `hsl(${k.hue ?? 170},100%,80%)`,
+      );
     }
     ctx.globalAlpha = 1;
     if (run.explosion) {
@@ -490,6 +672,7 @@ export function createCollector(onPulse: () => void = () => {}) {
   return {
     run,
     reset,
+    nextTrack,
     beat,
     step,
     draw,

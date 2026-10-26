@@ -140,7 +140,7 @@ test('Spear preferences use local IPC and portable data', async () => {
       0,
     );
     await expect(
-      settings.getByText('Version 3.12.22', { exact: true }),
+      settings.getByText('Version 3.12.23', { exact: true }),
     ).toBeVisible();
     const pin = settings.getByLabel('Always on top', { exact: true });
     const pinButton = player.locator(
@@ -907,6 +907,56 @@ test('Spear preferences use local IPC and portable data', async () => {
     await game.screenshot({
       path: path.join(root, 'test-results/spear-pulsefield.png'),
     });
+    // Render every unlocked music motif and the repulsion wave in the real canvas.
+    await game.evaluate(() => {
+      const c = window.testCollector;
+      c.reset();
+      c.run.gathered = 450;
+      c.run.objects = Array.from({ length: 8 }, (_, motif) => ({
+        x: 0.14 + (motif % 4) * 0.24,
+        y: 0.2 + Math.floor(motif / 4) * 0.3,
+        radius: 45,
+        hue: [315, 45, 190, 135, 195, 275, 30, 165][motif],
+        motif,
+        hazard: false,
+        sides: 4,
+        angle: 0,
+      }));
+      c.pulse();
+    });
+    await game.waitForTimeout(160);
+    await game.screenshot({
+      path: path.join(root, 'test-results/spear-music-collectibles.png'),
+    });
+    await game.evaluate(() => {
+      Object.defineProperty(document.querySelector('video'), 'duration', {
+        configurable: true,
+        value: 100,
+      });
+      window.testMediaTime = 99;
+    });
+    await game.waitForTimeout(100);
+    await game.evaluate(() => {
+      window.testCollector.run.gathered = 450;
+      document.querySelector('ytmusic-player-bar .title').textContent =
+        'Another track';
+    });
+    await expect(game.locator('#status')).toHaveText(
+      'Track complete · Beautiful flight!',
+    );
+    await game.evaluate(() => {
+      window.testMediaTime = 0;
+    });
+    await game.waitForTimeout(150);
+    expect(
+      await game.evaluate(() => window.testCollector.run.celebration),
+    ).toBeGreaterThan(2);
+    expect(
+      await game.evaluate(() => window.testCollector.run.celebrationPower),
+    ).toBe(10);
+    await game.screenshot({
+      path: path.join(root, 'test-results/spear-track-celebration.png'),
+    });
     await game.evaluate(() => {
       const video = document.querySelector('video');
       Object.defineProperty(video, 'paused', {
@@ -1353,9 +1403,12 @@ test('Stardrift collects with its trail, clears mines, penalizes misses and refo
   r.objects.push(shape(0.6, 0.7, true));
   game.step(0.01, true, 120, 0.1, true);
   expect(r.waves).toHaveLength(1);
-  for (let i = 0; i < 40; i++) game.step(0.016, true, 120, 0.1, false);
-  expect(r.objects).toHaveLength(0);
+  for (let i = 0; i < 20; i++) game.step(0.016, true, 120, 0.1, false);
+  expect(r.objects).toHaveLength(1);
+  expect(r.objects[0].hazard).toBe(true);
+  expect(r.objects[0].x).toBeGreaterThan(0.6);
   expect(r.mass).toBeGreaterThan(3);
+  r.objects = [];
   r.waves = [];
   r.invulnerable = 0;
   r.mass = 16;
@@ -1393,6 +1446,75 @@ test('Stardrift collects with its trail, clears mines, penalizes misses and refo
   const distance = r.distance;
   game.step(0.5, false, 120, 0.1, false);
   expect(r.distance).toBe(distance);
+});
+
+test('Stardrift unlocks music, pushes both kinds of objects and celebrates completed tracks', async () => {
+  const source = stripTypeScriptTypes(
+    await fs.readFile(path.join(root, 'src/classic/collector.ts'), 'utf8'),
+  );
+  const { createCollector } = await import(
+    'data:text/javascript;base64,' + Buffer.from(source).toString('base64')
+  );
+  const game = createCollector(),
+    r = game.run;
+  const spawnSet = (gathered) => {
+    game.reset();
+    r.gathered = gathered;
+    for (let i = 0; i < 40; i++) game.beat(0, 0.1);
+    return new Set(r.objects.filter((o) => !o.hazard).map((o) => o.motif));
+  };
+  expect([...spawnSet(0)].sort()).toEqual([0, 1, 2, 3]);
+  expect(spawnSet(50).has(4)).toBe(true);
+  expect(spawnSet(150).has(6)).toBe(true);
+  expect(spawnSet(200).has(7)).toBe(true);
+  expect(r.objects.some((o) => o.hazard && o.radius === 90 && o.drift)).toBe(
+    true,
+  );
+  const obstacle = r.objects.find((o) => o.hazard && o.drift);
+  const x = obstacle.x;
+  game.step(0.01, true, 120, 0.1, false);
+  expect(obstacle.x).not.toBe(x);
+  game.reset();
+  const object = (x, hazard) => ({
+    x,
+    y: 0.65,
+    radius: 10,
+    hue: 180,
+    sides: 4,
+    hazard,
+    angle: 0,
+  });
+  const good = object(0.4, false),
+    bad = object(0.6, true);
+  r.objects = [good, bad];
+  game.pulse();
+  for (let i = 0; i < 30; i++) game.step(0.016, true, 120, 0.1, false);
+  expect(r.objects).toHaveLength(2);
+  expect(good.x).toBeLessThan(0.4);
+  expect(bad.x).toBeGreaterThan(0.6);
+  expect(r.score).toBe(0);
+  good.y = 1.5;
+  game.step(0.01, true, 120, 0.1, false);
+  expect(r.score).toBe(0); // Pushing away a collectible is not a miss.
+  r.gathered = 450;
+  game.nextTrack(true);
+  expect(r.celebrationPower).toBe(10);
+  expect(r.celebration).toBe(3);
+  game.beat(0, 0.2);
+  expect(r.objects).toHaveLength(0);
+  game.step(0.016, true, 120, 0.1, false);
+  expect(r.particles.length).toBeGreaterThan(50);
+  const time = r.celebration;
+  game.step(1, false, 120, 0.1, false);
+  expect(r.celebration).toBe(time);
+  for (let i = 0; i < 200; i++) game.step(0.016, true, 120, 0.1, false);
+  game.beat(0, 0.2);
+  expect(r.objects.length).toBeGreaterThan(0);
+  game.nextTrack(false);
+  expect(r.celebration).toBe(0);
+  r.respawn = 1;
+  game.nextTrack(true);
+  expect(r.celebration).toBe(0);
 });
 
 test('locked configuration survives startup, merges changes, and flushes recovery', async () => {

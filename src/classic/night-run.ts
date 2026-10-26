@@ -32,7 +32,7 @@ function openGame() {
   score.id = 'score';
   const footer = document.createElement('footer');
   footer.textContent =
-    'Mouse / arrows: move · LMB / Space: pulse · Core hits explode; trails clear mines · R: restart · Esc: return ';
+    'Mouse / arrows: move · LMB / Space: push wave · Core hits explode; trails clear mines · R: restart · Esc: return ';
   const meter = document.createElement('progress');
   meter.max = 1;
   meter.setAttribute('aria-label', 'Music pulse');
@@ -91,6 +91,7 @@ function openGame() {
     lastBeat = audioMotion.beat,
     lastTrack = '',
     lastMediaTime = 0,
+    lastDuration = 0,
     pulse = 0,
     lastSpawnTime = -1,
     spawnClock = 0;
@@ -257,12 +258,21 @@ function openGame() {
       track !== lastTrack ||
       (video && Math.abs(video.currentTime - lastMediaTime) > 2)
     ) {
-      drive.reset();
+      const completed =
+        !!lastTrack &&
+        Number.isFinite(lastDuration) &&
+        lastDuration > 10 &&
+        lastMediaTime >= lastDuration - 2 &&
+        (track !== lastTrack || (video?.currentTime ?? 0) < 2);
+      // YouTube can reset media time before updating its title. Preserve the
+      // completion animation across both notifications for the same transition.
+      if (run.celebration <= 0) drive.nextTrack(completed);
       lastTrack = track;
       lastBeat = audioMotion.beat;
       ((lastSpawnTime = -1), (spawnClock = 0));
     }
     lastMediaTime = video?.currentTime ?? 0;
+    lastDuration = video?.duration ?? 0;
     const active =
       activity.visible &&
       (audioMotion.active ||
@@ -288,9 +298,12 @@ function openGame() {
     }
     lastBeat = audioMotion.beat;
     drive.step(dt, active, audioMotion.bpm, audioMotion.energy, charging);
-    status.textContent = active
-      ? track || 'Stardrift'
-      : 'Play music to bring the track to life';
+    status.textContent =
+      run.celebration > 0
+        ? 'Track complete · Beautiful flight!'
+        : active
+          ? track || 'Stardrift'
+          : 'Play music to bring the track to life';
     score.textContent = `${run.score} pts · ×${Math.min(5, 1 + Math.floor(run.combo / 15))} · ${run.respawn > 0 ? 'Reforming…' : 'Trails ' + drive.trailCount()} · ${run.cooldown > 0 ? 'Pulse ' + run.cooldown.toFixed(1) + 's' : 'Pulse ready'}`;
     meter.value = Math.max(audioMotion.bass, audioMotion.energy);
     const duration = video?.duration ?? 0;

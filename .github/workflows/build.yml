@@ -32,8 +32,8 @@ jobs:
           GIT_COMMITTER_EMAIL: noreply@users.noreply.github.com
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = 38247b5fc58189dff92f2c85272b6e3b43c5536c
-          safe=$(git commit-tree "HEAD^{tree}" -p "HEAD^" -m "Add expressive collectibles and stronger crash feedback")
+          test "$(git rev-parse HEAD^)" = c42f9f99323fe7672d5d0e2264996d4100793229
+          safe=$(git commit-tree "HEAD^{tree}" -p "HEAD^" -m "Add musical collectibles, repulsion waves and track celebrations")
           git push origin "$safe:refs/heads/feat/classic-desktop" --force-with-lease="refs/heads/feat/classic-desktop:$GITHUB_SHA"
           echo "sha=$safe" >> "$GITHUB_OUTPUT"
   windows:
@@ -76,6 +76,8 @@ jobs:
             test-results/spear-tray.png
             test-results/spear-update.png
             test-results/spear-pulsefield.png
+            test-results/spear-music-collectibles.png
+            test-results/spear-track-celebration.png
             test-results/spear-equalizer.png
             test-results/spear-visualizer-layout.png
             test-results/spear-compact-layout.png
