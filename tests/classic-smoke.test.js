@@ -629,6 +629,17 @@ test('Spear preferences use local IPC and portable data', async () => {
           document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
+    const visibleButtonsFit = await tray
+      .locator('button:visible')
+      .evaluateAll((buttons) =>
+        buttons.every((b) => {
+          const r = b.getBoundingClientRect();
+          return (
+            r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight
+          );
+        }),
+      );
+    expect(visibleButtonsFit).toBe(true);
     const seekBox = await tray
       .getByRole('slider', { name: 'Seek track' })
       .boundingBox();
@@ -1318,6 +1329,7 @@ test('Stardrift collects with its trail, clears mines, penalizes misses and refo
   r.objects.push(shape(0.5, 0.7));
   game.step(0.001, true, 120, 0.1, false);
   expect(r.score).toBe(30);
+  expect(r.pickupFlash).toBe(1);
   r.tail = [
     { x: 0.2, y: 0.4, age: 0 },
     { x: 0.2, y: 0.5, age: 0 },
@@ -1352,7 +1364,8 @@ test('Stardrift collects with its trail, clears mines, penalizes misses and refo
   const scoreBeforeCrash = r.score;
   r.objects.push(shape(r.x, r.y, true));
   game.step(0.01, true, 120, 0.1, false);
-  expect(r.respawn).toBeGreaterThan(0);
+  expect(r.respawn).toBeGreaterThan(1.5);
+  expect(r.explosion).not.toBeNull();
   for (let i = 0; i < 140; i++) game.step(0.016, true, 120, 0.1, false);
   expect(r.mass).toBe(3);
   expect(r.score).toBe(scoreBeforeCrash);
@@ -1360,7 +1373,7 @@ test('Stardrift collects with its trail, clears mines, penalizes misses and refo
   expect(game.trailCount()).toBe(1);
   expect(game.trailLife()).toBeCloseTo(0.22);
   expect(r.y).toBeCloseTo(0.86);
-  expect(r.invulnerable).toBeGreaterThan(0);
+  expect(r.invulnerable).toBeGreaterThan(2.5);
   r.tail = [
     { x: 0.2, y: 0.4, age: 0.1 },
     { x: 0.2, y: 0.5, age: 0 },

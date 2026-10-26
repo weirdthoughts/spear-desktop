@@ -32,8 +32,8 @@ jobs:
           GIT_COMMITTER_EMAIL: noreply@users.noreply.github.com
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = 863fc818740b9eb05e7a169b11b52d33e14a286c
-          safe=$(git commit-tree "HEAD^{tree}" -p "HEAD^" -m "Restore native fullscreen after routing assertions")
+          test "$(git rev-parse HEAD^)" = 38247b5fc58189dff92f2c85272b6e3b43c5536c
+          safe=$(git commit-tree "HEAD^{tree}" -p "HEAD^" -m "Add expressive collectibles and stronger crash feedback")
           git push origin "$safe:refs/heads/feat/classic-desktop" --force-with-lease="refs/heads/feat/classic-desktop:$GITHUB_SHA"
           echo "sha=$safe" >> "$GITHUB_OUTPUT"
   windows:
