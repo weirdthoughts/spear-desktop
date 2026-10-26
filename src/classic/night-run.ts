@@ -300,7 +300,7 @@ function openGame() {
     drive.step(dt, active, audioMotion.bpm, audioMotion.energy, charging);
     status.textContent =
       run.celebration > 0
-        ? 'Track complete · Beautiful flight!'
+        ? 'Track complete · Onward!'
         : active
           ? track || 'Stardrift'
           : 'Play music to bring the track to life';
@@ -320,7 +320,7 @@ function openGame() {
     ctx.fillRect(0, 0, width, height);
     // Artwork is independent from the visualizer canvas; a track change must
     // replace it even when the same visualizer continues rendering.
-    if (time >= nextArtworkCheck) {
+    if (time >= nextArtworkCheck && (run.celebration <= 0 || run.arriving)) {
       nextArtworkCheck = time + 250;
       const image = document.querySelector<HTMLImageElement>(
         'ytmusic-player-bar img.image, ytmusic-player-bar img',
@@ -374,6 +374,12 @@ function openGame() {
       }
     }
     drive.draw(ctx, width, height);
+    const fade = drive.transitionFade();
+    if (fade > 0) {
+      ctx.fillStyle = `rgba(5,8,18,${fade})`;
+      ctx.fillRect(0, 0, width, height);
+    }
+    score.style.opacity = progressRow.style.opacity = String(1 - fade);
   }
 
   const wake = () => {

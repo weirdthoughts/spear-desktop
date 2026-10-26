@@ -34,9 +34,11 @@ export function createCollector(onPulse: () => void = () => {}) {
     combo: 0,
     gathered: 0,
     pickupFlash: 0,
+    beatFlash: 0,
+    coreMotion: 0,
     celebration: 0,
     celebrationPower: 0,
-    celebrationBurst: 0,
+    arriving: false,
     explosion: null as (Point & { age: number }) | null,
     invulnerable: 0,
     respawn: 0,
@@ -62,12 +64,13 @@ export function createCollector(onPulse: () => void = () => {}) {
     Math.max(a, Math.min(b, v));
   const radius = () => 6 + Math.sqrt(run.mass) * 3;
   const trailLife = () => Math.min(2.4, 0.22 + run.gathered * 0.045);
-  const trailCount = () => Math.min(10, 1 + Math.floor(run.gathered / 50));
+  const trailCount = () => Math.min(32, 1 + Math.floor(run.gathered / 50));
   const trailPoint = (p: Tail, branch: number): Point => ({
     x:
       p.x +
       (branch === 0 ? 0 : (branch % 2 ? -1 : 1) * Math.ceil(branch / 2)) *
-        Math.min(0.035, p.age * 0.035),
+        Math.min(1, p.age) *
+        Math.min(0.035, 0.26 / Math.ceil(trailCount() / 2)),
     y: p.y,
   });
   function burst(x: number, y: number, red = false, count = 12, hue = 170) {
@@ -150,6 +153,7 @@ export function createCollector(onPulse: () => void = () => {}) {
   }
   function beat(band: number, energy: number) {
     if (run.celebration > 0) return;
+    run.beatFlash = clamp(energy * 3, 0.15, 1);
     const unlocked = Math.min(8, 4 + Math.max(0, trailCount() - 1));
     const i = run.sequence++,
       complex = energy > 0.22,
@@ -172,7 +176,10 @@ export function createCollector(onPulse: () => void = () => {}) {
     if (
       i > 5 &&
       i %
-        Math.max(2, (complex ? 5 : 9) - Math.floor((trailCount() - 1) / 2)) ===
+        Math.max(
+          2,
+          (complex ? 5 : 9) - Math.floor((Math.min(10, trailCount()) - 1) / 2),
+        ) ===
         0
     )
       run.objects.push({
@@ -182,7 +189,7 @@ export function createCollector(onPulse: () => void = () => {}) {
         motif: trailCount() >= 5 && i % 2 === 0 ? 1 : 0,
         drift:
           trailCount() >= 3
-            ? (i % 2 ? -1 : 1) * (0.06 + trailCount() * 0.008)
+            ? (i % 2 ? -1 : 1) * (0.06 + Math.min(10, trailCount()) * 0.008)
             : 0,
         hue: 0,
         sides: 8,
@@ -213,9 +220,11 @@ export function createCollector(onPulse: () => void = () => {}) {
       combo: 0,
       gathered: 0,
       pickupFlash: 0,
+      beatFlash: 0,
+      coreMotion: 0,
       celebration: 0,
       celebrationPower: 0,
-      celebrationBurst: 0,
+      arriving: false,
       explosion: null,
       invulnerable: 1.5,
       respawn: 0,
@@ -236,14 +245,19 @@ export function createCollector(onPulse: () => void = () => {}) {
     });
   }
   function nextTrack(completed: boolean) {
-    const power = trailCount();
-    const survived = run.respawn === 0 && run.mass > 0;
-    reset();
-    if (completed && survived) {
+    if (completed && run.respawn === 0 && run.mass > 0) {
       run.celebration = 3;
-      run.celebrationPower = power;
-      run.invulnerable = 4.5;
-    }
+      run.celebrationPower = trailCount();
+      run.arriving = false;
+      run.objects = [];
+      run.waves = [];
+      run.held = false;
+    } else reset();
+  }
+  function transitionFade() {
+    if (run.celebration <= 0) return 0;
+    const elapsed = 3 - run.celebration;
+    return clamp(Math.min((elapsed - 1.05) / 0.55, (3 - elapsed) / 1.25), 0, 1);
   }
   function step(
     dt: number,
@@ -260,24 +274,24 @@ export function createCollector(onPulse: () => void = () => {}) {
     run.time += dt;
     if (run.celebration > 0) {
       run.celebration = Math.max(0, run.celebration - dt);
-      run.celebrationBurst -= dt;
-      if (run.celebrationBurst <= 0) {
-        const hue = (run.time * 170) % 360;
-        const x = 0.15 + Math.random() * 0.7,
-          y = 0.15 + Math.random() * 0.45;
-        burst(x, y, false, 30 + run.celebrationPower * 6, hue);
-        run.blooms.push({
-          x,
-          y,
-          age: 0,
-          radius: 50 + run.celebrationPower * 5,
-          hue,
-        });
-        run.celebrationBurst = 0.55 - run.celebrationPower * 0.035;
+      if (!run.arriving && run.celebration < 1.35) {
+        const remaining = run.celebration,
+          power = run.celebrationPower;
+        reset();
+        run.celebration = remaining;
+        run.celebrationPower = power;
+        run.arriving = true;
+        run.y = 0.95;
+        run.targetY = 0.72;
+        run.invulnerable = 2;
       }
     }
     for (const bloom of run.blooms) bloom.age += dt;
     run.blooms = run.blooms.filter((b) => b.age < 0.85).slice(-24);
+    run.beatFlash = Math.max(0, run.beatFlash - dt * 3.5);
+    run.coreMotion +=
+      (clamp(energy * 2.4 + run.beatFlash * 0.4, 0, 1) - run.coreMotion) *
+      (1 - Math.exp(-dt * 9));
     run.pickupFlash = Math.max(0, run.pickupFlash - dt * 4);
     if (run.explosion && (run.explosion.age += dt) > 1.3) run.explosion = null;
     run.invulnerable = Math.max(0, run.invulnerable - dt);
@@ -288,12 +302,20 @@ export function createCollector(onPulse: () => void = () => {}) {
     const speed =
       ((0.33 * clamp(bpm, 70, 170)) / 108) *
       (1 + run.energy * 0.42) *
-      (1 + (trailCount() - 1) * 0.07) *
+      (1 + (Math.min(10, trailCount()) - 1) * 0.07) *
       (run.slow > 0 ? 0.45 + 0.55 * (1 - run.slow / 2.4) : 1);
     run.speed += (speed - run.speed) * (1 - Math.exp(-dt * 2));
     run.distance += run.speed * dt;
-    run.x += (run.targetX - run.x) * (1 - Math.exp(-dt * 15));
-    run.y += (run.targetY - run.y) * (1 - Math.exp(-dt * 15));
+    if (run.celebration > 0) {
+      run.targetX = 0.5;
+      run.targetY = run.arriving ? 0.72 : -0.4;
+      run.x += (0.5 - run.x) * (1 - Math.exp(-dt * 3));
+      if (run.arriving) run.y += (0.72 - run.y) * (1 - Math.exp(-dt * 3));
+      else run.y -= dt * (0.25 + (3 - run.celebration) * 1.5);
+    } else {
+      run.x += (run.targetX - run.x) * (1 - Math.exp(-dt * 15));
+      run.y += (run.targetY - run.y) * (1 - Math.exp(-dt * 15));
+    }
     if (run.respawn > 0) {
       run.respawn -= dt;
       if (run.respawn <= 0) {
@@ -311,11 +333,27 @@ export function createCollector(onPulse: () => void = () => {}) {
     } else run.charge = 0;
     run.held = held;
     for (const w of run.waves) w.age += dt;
+    const branches = run.respawn
+      ? []
+      : Array.from({ length: trailCount() }, (_, branch) => {
+          const points = run.tail.map((p) => trailPoint(p, branch));
+          let left = Infinity,
+            right = -Infinity,
+            top = Infinity,
+            bottom = -Infinity;
+          for (const p of points) {
+            left = Math.min(left, p.x);
+            right = Math.max(right, p.x);
+            top = Math.min(top, p.y);
+            bottom = Math.max(bottom, p.y);
+          }
+          return { points, left, right, top, bottom };
+        });
     for (const o of run.objects) {
       o.x += ((o.vx ?? 0) + (o.drift ?? 0)) * dt;
       o.y += (run.speed + (o.vy ?? 0)) * dt;
-      o.vx = (o.vx ?? 0) * Math.exp(-dt * 2.3);
-      o.vy = (o.vy ?? 0) * Math.exp(-dt * 2.3);
+      o.vx = (o.vx ?? 0) * Math.exp(-dt * 1.8);
+      o.vy = (o.vy ?? 0) * Math.exp(-dt * 1.8);
       if (o.drift && (o.x < 0.1 || o.x > 0.9)) {
         o.drift *= -1;
         o.x = clamp(o.x, 0.1, 0.9);
@@ -341,19 +379,37 @@ export function createCollector(onPulse: () => void = () => {}) {
           ) {
             const angle = distance > 0.001 ? Math.atan2(dy, dx) : -Math.PI / 2;
             // A single impulse per wave. Neither collect nor destroy anything.
-            o.vx = (Math.cos(angle) * 500) / width;
-            o.vy = (Math.sin(angle) * 500) / height;
+            o.vx = (Math.cos(angle) * 1200) / width;
+            o.vy = (Math.sin(angle) * 1200) / height;
             o.waveId = w.id;
             o.pushed = true;
           }
         }
         // Every visible branch collects colors and safely detonates red mines.
-        if (!o.done && !run.respawn)
-          for (let branch = 0; branch < trailCount() && !o.done; branch++)
-            for (let i = 1; i < run.tail.length; i++) {
-              const a = trailPoint(run.tail[i - 1], branch),
-                b = trailPoint(run.tail[i], branch);
-              if (tailDistance(o, a, b) < o.radius * 0.7 + 3 + run.mass * 0.3) {
+        if (!o.done && !run.respawn) {
+          const reach = o.radius * 0.7 + 3 + run.mass * 0.3;
+          const rx = reach / width,
+            ry = reach / height;
+          for (const branch of branches) {
+            if (o.done) break;
+            if (
+              o.x < branch.left - rx ||
+              o.x > branch.right + rx ||
+              o.y < branch.top - ry ||
+              o.y > branch.bottom + ry
+            )
+              continue;
+            for (let i = 1; i < branch.points.length; i++) {
+              const a = branch.points[i - 1],
+                b = branch.points[i];
+              if (
+                o.x < Math.min(a.x, b.x) - rx ||
+                o.x > Math.max(a.x, b.x) + rx ||
+                o.y < Math.min(a.y, b.y) - ry ||
+                o.y > Math.max(a.y, b.y) + ry
+              )
+                continue;
+              if (tailDistance(o, a, b) < reach) {
                 if (o.hazard) {
                   o.done = true;
                   burst(o.x, o.y, true, 35);
@@ -361,6 +417,8 @@ export function createCollector(onPulse: () => void = () => {}) {
                 break;
               }
             }
+          }
+        }
       }
       if (!o.done && o.y - o.radius / height > 1) {
         o.done = true;
@@ -546,18 +604,29 @@ export function createCollector(onPulse: () => void = () => {}) {
       ctx.restore();
     }
     ctx.lineCap = 'round';
+    // Batch fading segments into eight paths per branch instead of thousands
+    // of individual canvas strokes at the maximum trail count.
+    const buckets: number[][] = Array.from({ length: 8 }, () => []);
+    for (let i = 1; i < run.tail.length; i++) {
+      const alpha = clamp(1 - run.tail[i].age / trailLife(), 0, 1);
+      buckets[Math.min(7, Math.floor(alpha * 8))].push(i);
+    }
     for (let branch = 0; branch < trailCount(); branch++) {
-      for (let i = 1; i < run.tail.length; i++) {
-        const a = trailPoint(run.tail[i - 1], branch),
-          b = trailPoint(run.tail[i], branch),
-          alpha = clamp(1 - run.tail[i].age / trailLife(), 0, 1);
+      const points = run.tail.map((p) => trailPoint(p, branch));
+      for (let bucket = 0; bucket < 8; bucket++) {
+        if (!buckets[bucket].length) continue;
+        const alpha = (bucket + 0.5) / 8;
         for (const glow of [true, false]) {
           ctx.beginPath();
-          ctx.moveTo(a.x * w, a.y * h);
-          ctx.lineTo(b.x * w, b.y * h);
+          for (const i of buckets[bucket]) {
+            const a = points[i - 1],
+              b = points[i];
+            ctx.moveTo(a.x * w, a.y * h);
+            ctx.lineTo(b.x * w, b.y * h);
+          }
           ctx.lineWidth =
             (2 + run.mass * 0.35 + run.energy * 3) * (glow ? 4 : 1);
-          ctx.strokeStyle = `hsla(${170 + Math.floor(run.gathered / 25) * 35 + branch * 65},85%,75%,${alpha * (glow ? 0.1 : 0.8)})`;
+          ctx.strokeStyle = `hsla(${170 + Math.floor(run.gathered / 25) * 35 + branch * 65},85%,75%,${alpha * (glow ? 0.08 : 0.8)})`;
           ctx.stroke();
         }
       }
@@ -656,13 +725,54 @@ export function createCollector(onPulse: () => void = () => {}) {
           : 1;
       ctx.shadowColor = '#a6fff0';
       ctx.shadowBlur = 18 + run.mass + run.pickupFlash * 30;
-      const pulseRadius = radius() * (1 + run.pickupFlash * 0.55);
-      dot(
-        run.x,
-        run.y,
-        pulseRadius,
-        run.pickupFlash > 0.3 ? '#fff1ad' : '#a4f0e4',
-      );
+      const pulseRadius =
+        radius() * (1 + run.pickupFlash * 0.4 + run.coreMotion * 0.25);
+      ctx.beginPath();
+      for (let i = 0; i <= 64; i++) {
+        const angle = (i / 64) * Math.PI * 2;
+        const ripple =
+          run.coreMotion * 0.14 * Math.sin(angle * 5 + run.time * 2) +
+          run.beatFlash * 0.045 * Math.sin(angle * 3 - run.time);
+        const r = pulseRadius * (1 + ripple);
+        const x = run.x * w + Math.cos(angle) * r,
+          y = run.y * h + Math.sin(angle) * r;
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = run.pickupFlash > 0.3 ? '#fff1ad' : '#a4f0e4';
+      ctx.fill();
+      // The core's collision radius remains stable while its outline reacts to music.
+      const ready = run.cooldown <= 0 && run.celebration <= 0;
+      const ringRadius = pulseRadius * 1.2 + 7;
+      ctx.shadowBlur = ready ? 12 : 0;
+      ctx.strokeStyle = '#a6fff033';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(run.x * w, run.y * h, ringRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      if (run.celebration <= 0) {
+        ctx.strokeStyle = ready ? '#d6fff2' : '#68c8cc';
+        ctx.lineWidth = ready ? 2.5 : 2;
+        ctx.beginPath();
+        ctx.arc(
+          run.x * w,
+          run.y * h,
+          ringRadius,
+          -Math.PI / 2,
+          -Math.PI / 2 + Math.PI * 2 * clamp(1 - run.cooldown / 2.7, 0, 1),
+        );
+        ctx.stroke();
+        if (ready)
+          for (let i = 0; i < 3; i++) {
+            const a = (i * Math.PI * 2) / 3 - Math.PI / 2;
+            dot(
+              run.x + (Math.cos(a) * ringRadius) / w,
+              run.y + (Math.sin(a) * ringRadius) / h,
+              2.5,
+              '#ffffff',
+            );
+          }
+      }
       dot(run.x, run.y, radius() * 0.45, '#f0fffc');
       ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
@@ -673,6 +783,7 @@ export function createCollector(onPulse: () => void = () => {}) {
     run,
     reset,
     nextTrack,
+    transitionFade,
     beat,
     step,
     draw,

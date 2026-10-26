@@ -140,7 +140,7 @@ test('Spear preferences use local IPC and portable data', async () => {
       0,
     );
     await expect(
-      settings.getByText('Version 3.12.23', { exact: true }),
+      settings.getByText('Version 3.12.24', { exact: true }),
     ).toBeVisible();
     const pin = settings.getByLabel('Always on top', { exact: true });
     const pinButton = player.locator(
@@ -929,6 +929,21 @@ test('Spear preferences use local IPC and portable data', async () => {
       path: path.join(root, 'test-results/spear-music-collectibles.png'),
     });
     await game.evaluate(() => {
+      const r = window.testCollector.run;
+      r.gathered = 1550;
+      r.objects = [];
+      r.tail = Array.from({ length: 180 }, (_, i) => ({
+        x: 0.5 + Math.sin(i / 25) * 0.08,
+        y: 0.7 + i / 600,
+        age: i / 75,
+      }));
+      r.cooldown = 0;
+    });
+    await game.waitForTimeout(80);
+    await game.screenshot({
+      path: path.join(root, 'test-results/spear-max-trails.png'),
+    });
+    await game.evaluate(() => {
       Object.defineProperty(document.querySelector('video'), 'duration', {
         configurable: true,
         value: 100,
@@ -942,7 +957,7 @@ test('Spear preferences use local IPC and portable data', async () => {
         'Another track';
     });
     await expect(game.locator('#status')).toHaveText(
-      'Track complete · Beautiful flight!',
+      'Track complete · Onward!',
     );
     await game.evaluate(() => {
       window.testMediaTime = 0;
@@ -957,6 +972,16 @@ test('Spear preferences use local IPC and portable data', async () => {
     await game.screenshot({
       path: path.join(root, 'test-results/spear-track-celebration.png'),
     });
+    await expect
+      .poll(() => game.evaluate(() => window.testCollector.run.arriving))
+      .toBe(true);
+    await expect
+      .poll(() => game.evaluate(() => window.testCollector.run.celebration), {
+        timeout: 5000,
+      })
+      .toBe(0);
+    await expect(game.locator('#status')).toHaveText('Another track');
+
     await game.evaluate(() => {
       const video = document.querySelector('video');
       Object.defineProperty(video, 'paused', {
@@ -1442,13 +1467,13 @@ test('Stardrift collects with its trail, clears mines, penalizes misses and refo
   expect(game.trailCount()).toBe(2);
   expect(game.trailLife()).toBeGreaterThan(2);
   r.gathered = 10000;
-  expect(game.trailCount()).toBe(10);
+  expect(game.trailCount()).toBe(32);
   const distance = r.distance;
   game.step(0.5, false, 120, 0.1, false);
   expect(r.distance).toBe(distance);
 });
 
-test('Stardrift unlocks music, pushes both kinds of objects and celebrates completed tracks', async () => {
+test('Stardrift unlocks music, pushes objects and flies onward after completed tracks', async () => {
   const source = stripTypeScriptTypes(
     await fs.readFile(path.join(root, 'src/classic/collector.ts'), 'utf8'),
   );
@@ -1490,8 +1515,8 @@ test('Stardrift unlocks music, pushes both kinds of objects and celebrates compl
   game.pulse();
   for (let i = 0; i < 30; i++) game.step(0.016, true, 120, 0.1, false);
   expect(r.objects).toHaveLength(2);
-  expect(good.x).toBeLessThan(0.4);
-  expect(bad.x).toBeGreaterThan(0.6);
+  expect(good.x).toBeLessThan(0.2);
+  expect(bad.x).toBeGreaterThan(0.8);
   expect(r.score).toBe(0);
   good.y = 1.5;
   game.step(0.01, true, 120, 0.1, false);
@@ -1503,7 +1528,10 @@ test('Stardrift unlocks music, pushes both kinds of objects and celebrates compl
   game.beat(0, 0.2);
   expect(r.objects).toHaveLength(0);
   game.step(0.016, true, 120, 0.1, false);
-  expect(r.particles.length).toBeGreaterThan(50);
+  const departureY = r.y;
+  game.step(0.2, true, 120, 0.1, false);
+  expect(r.y).toBeLessThan(departureY);
+  expect(game.trailCount()).toBe(10);
   const time = r.celebration;
   game.step(1, false, 120, 0.1, false);
   expect(r.celebration).toBe(time);
@@ -1514,6 +1542,59 @@ test('Stardrift unlocks music, pushes both kinds of objects and celebrates compl
   expect(r.celebration).toBe(0);
   r.respawn = 1;
   game.nextTrack(true);
+  expect(r.celebration).toBe(0);
+});
+
+test('Stardrift keeps 32 trails bounded and reacts to music without changing on pause', async () => {
+  const source = stripTypeScriptTypes(
+    await fs.readFile(path.join(root, 'src/classic/collector.ts'), 'utf8'),
+  );
+  const { createCollector } = await import(
+    'data:text/javascript;base64,' + Buffer.from(source).toString('base64')
+  );
+  const game = createCollector(),
+    r = game.run;
+  r.gathered = 10000;
+  r.tail = Array.from({ length: 180 }, (_, i) => ({
+    x: 0.5 + Math.sin(i / 25) * 0.12,
+    y: 0.7 + i / 600,
+    age: i / 75,
+  }));
+  expect(game.trailCount()).toBe(32);
+  let strokes = 0;
+  const ctx = new Proxy(
+    {},
+    {
+      get: (_, key) =>
+        key === 'stroke'
+          ? () => strokes++
+          : key === 'createRadialGradient'
+            ? () => ({ addColorStop() {} })
+            : () => {},
+      set: () => true,
+    },
+  );
+  game.draw(ctx, 1280, 720);
+  expect(strokes).toBeLessThan(700);
+  for (let i = 0; i < 60; i++) game.step(0.016, true, 120, 0.4, false);
+  expect(r.coreMotion).toBeGreaterThan(0.8);
+  const moving = r.coreMotion;
+  game.step(1, false, 120, 0, false);
+  expect(r.coreMotion).toBe(moving);
+  for (let i = 0; i < 60; i++) game.step(0.016, true, 120, 0, false);
+  expect(r.coreMotion).toBeLessThan(0.01);
+  r.gathered = 1550;
+  game.nextTrack(true);
+  for (let i = 0; i < 80; i++) game.step(0.016, true, 120, 0.1, false);
+  expect(r.y).toBeLessThan(0);
+  expect(game.trailCount()).toBe(32);
+  expect(game.transitionFade()).toBeGreaterThan(0.3);
+  for (let i = 0; i < 25; i++) game.step(0.016, true, 120, 0.1, false);
+  expect(r.arriving).toBe(true);
+  expect(game.transitionFade()).toBeGreaterThan(0.95);
+  expect(game.trailCount()).toBe(1);
+  for (let i = 0; i < 90; i++) game.step(0.016, true, 120, 0.1, false);
+  expect(game.transitionFade()).toBe(0);
   expect(r.celebration).toBe(0);
 });
 
