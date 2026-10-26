@@ -566,14 +566,20 @@ export function setupClassic(win: BrowserWindow) {
         const clock = (await win.webContents
           .executeJavaScript(`(() => {
           const v = document.querySelector('video');
-          return v ? { elapsed: v.currentTime, duration: Number.isFinite(v.duration) ? v.duration : 0, paused: v.paused } : null;
+          return v ? { elapsed: v.currentTime, duration: Number.isFinite(v.duration) ? v.duration : 0, paused: v.paused, rating: document.querySelector('ytmusic-like-button-renderer')?.getAttribute('like-status') || 'INDIFFERENT', canRate: !!document.querySelector('ytmusic-like-button-renderer') } : null;
         })()`)
           .catch(() => null)) as {
           elapsed: number;
           duration: number;
           paused: boolean;
+          rating: string;
+          canRate: boolean;
         } | null;
         return {
+          rating: clock?.rating ?? 'INDIFFERENT',
+          canRate: clock?.canRate ?? false,
+          likeButtons: config.get('options.likeButtons'),
+          swapLikes: config.get('options.swapLikeButtonsOrder'),
           title: song.title ?? 'Nothing playing',
           artist: song.artist ?? 'Start your music',
           artwork,
@@ -598,6 +604,8 @@ export function setupClassic(win: BrowserWindow) {
         );
       if (action === 'playPause')
         return win.webContents.send('classic:tray-play');
+      if (action === 'like') return getSongControls(win).like();
+      if (action === 'dislike') return getSongControls(win).dislike();
       if (action === 'next') return getSongControls(win).next();
       if (action === 'previous') return getSongControls(win).previous();
       if (action === 'show') {

@@ -366,11 +366,9 @@ export default createPlugin({
             void window.ipcRenderer.invoke('classic:navigate', 'equalizer');
           },
         );
-        makeButton(
-          'Fullscreen',
-          'M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6',
-          fullscreen,
-        );
+        makeButton('Fullscreen', 'M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6', () => {
+          void this.props.stage?.fullscreen()?.catch(() => {});
+        });
         const nativeAction = (selector: string) => {
           document
             .querySelector<HTMLElement>(`ytmusic-player ${selector}`)

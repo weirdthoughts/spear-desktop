@@ -1,13 +1,14 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { Mutex } from 'async-mutex';
-import { BG, type BgConfig } from 'bgutils-js';
+import { runDownloadJob } from './job';
 import { app, type BrowserWindow, dialog, ipcMain } from 'electron';
 import is from 'electron-is';
 import filenamify from 'filenamify';
-import lazyVar from 'lazy-var';
+
 import NodeID3 from 'node-id3';
 import {
   Innertube,
@@ -46,13 +47,6 @@ import type { GetPlayerResponse } from '@/types/get-player-response';
 
 type CustomSongInfo = SongInfo & { trackId?: string };
 
-const ffmpeg = lazyVar.lazy(async () =>
-  (await import('@ffmpeg.wasm/main')).createFFmpeg({
-    log: false,
-    logger() {}, // Console.log,
-    progress() {}, // Console.log,
-  }),
-);
 const ffmpegMutex = new Mutex();
 
 Platform.shim.eval = (
@@ -75,6 +69,13 @@ Platform.shim.eval = (
   return new Function(code)();
 };
 
+const downloadFetch: typeof fetch = (input, init) =>
+  getNetFetchAsFetch(win.webContents.session)(input, {
+    ...init,
+    signal: init?.signal
+      ? AbortSignal.any([init.signal, AbortSignal.timeout(120000)])
+      : AbortSignal.timeout(120000),
+  });
 let yt: Innertube;
 let win: BrowserWindow;
 let playingUrl: string;
@@ -124,7 +125,17 @@ export const onMainLoad = async ({
   win = _win;
   config = await getConfig();
 
-  ipc.handle('download-song', (url: string) => downloadSong(url));
+  let busy = false;
+  ipc.handle('download-song', async (url: string) => {
+    if (busy) return;
+    busy = true;
+    sendFeedback_(win, 'Preparing download…');
+    try {
+      await downloadSong(url);
+    } finally {
+      busy = false;
+    }
+  });
   ipc.on('peard:video-src-changed', (data: GetPlayerResponse) => {
     playingUrl =
       data.microformat?.microformatDataRenderer?.urlCanonical ?? playingUrl;
@@ -154,67 +165,15 @@ async function initializeDownloadClient() {
     cache: new UniversalCache(false),
     cookie: await getCookieFromWindow(win),
     generate_session_locally: true,
-    fetch: getNetFetchAsFetch(win.webContents.session),
+    fetch: downloadFetch,
   });
 
-  const requestKey = 'O43z0dpjhgX20SCx4KAo';
-  const visitorData = yt.session.context.client.visitorData;
-
-  if (visitorData) {
-    const cleanUp = (context: Partial<typeof globalThis>) => {
-      delete context.window;
-      delete context.document;
-    };
-
-    try {
-      const [width, height] = win.getSize();
-      // emulate jsdom using linkedom
-      const window = new (await import('happy-dom')).Window({
-        width,
-        height,
-        console,
-      });
-      const document = window.document;
-
-      Object.assign(globalThis, {
-        window,
-        document,
-      });
-
-      const bgConfig: BgConfig = {
-        fetch: getNetFetchAsFetch(win.webContents.session),
-        globalObj: globalThis,
-        identifier: visitorData,
-        requestKey,
-      };
-
-      const bgChallenge = await BG.Challenge.create(bgConfig);
-      const interpreterJavascript =
-        bgChallenge?.interpreterJavascript
-          .privateDoNotAccessOrElseSafeScriptWrappedValue;
-
-      if (interpreterJavascript) {
-        // This is a workaround to run the interpreterJavascript code
-        // Maybe there is a better way to do this (e.g. https://github.com/Siubaak/sval ?)
-        // oxlint-disable-next-line typescript/no-implied-eval,typescript/no-unsafe-call
-        new Function(interpreterJavascript)();
-
-        const poTokenResult = await BG.PoToken.generate({
-          program: bgChallenge.program,
-          globalName: bgChallenge.globalName,
-          bgConfig,
-        }).finally(() => {
-          cleanUp(globalThis);
-        });
-
-        yt.session.po_token = poTokenResult.poToken;
-      } else {
-        cleanUp(globalThis);
-      }
-    } catch {
-      cleanUp(globalThis);
-    }
-  }
+  const visitor = yt.session.context.client.visitorData;
+  if (visitor)
+    yt.session.po_token = await runDownloadJob<string>(
+      { mode: 'token', visitor },
+      getNetFetchAsFetch(win.webContents.session),
+    );
 }
 
 export const onConfigChange = (newConfig: DownloaderPluginConfig) => {
@@ -485,7 +444,7 @@ async function downloadSongUnsafe(
   }
 
   if (fileBuffer) {
-    writeFileSync(filePath, fileBuffer);
+    await writeFile(filePath, fileBuffer);
   }
 
   sendFeedback(null, -1);
@@ -506,6 +465,8 @@ async function downloadChunks(
   let downloaded = 0;
   for await (const chunk of stream) {
     downloaded += chunk.length;
+    if (downloaded > 256 * 1024 * 1024)
+      throw new Error('This audio file exceeds the 256 MB download limit.');
     chunks.push(chunk);
     const ratio = downloaded / contentLength;
     const progress = Math.floor(ratio * 100);
@@ -537,57 +498,34 @@ async function iterableStreamToProcessedUint8Array(
 
   return await ffmpegMutex.runExclusive(async () => {
     try {
-      const ffmpegInstance = await ffmpeg.get();
-      if (!ffmpegInstance.isLoaded()) {
-        await ffmpegInstance.load();
-      }
-
-      sendFeedback(t('plugins.downloader.backend.feedback.preparing-file'));
-      ffmpegInstance.FS(
-        'writeFile',
-        safeVideoName,
-        Buffer.concat(
-          await downloadChunks(
-            stream,
-            contentLength,
-            sendFeedback,
-            increasePlaylistProgress,
-          ),
+      const bytes = Buffer.concat(
+        await downloadChunks(
+          stream,
+          contentLength,
+          sendFeedback,
+          increasePlaylistProgress,
         ),
       );
-
+      if (!presetFfmpegArgs.length) return bytes;
       sendFeedback(t('plugins.downloader.backend.feedback.converting'));
-
-      ffmpegInstance.setProgress(({ ratio }) => {
-        sendFeedback(
-          t('plugins.downloader.backend.feedback.conversion-progress', {
-            percent: Math.floor(ratio * 100),
-          }),
-          ratio,
-        );
-        increasePlaylistProgress(0.15 + ratio * 0.85);
-      });
-
-      const safeVideoNameWithExtension = `${safeVideoName}.${extension}`;
-      try {
-        await ffmpegInstance.run(
-          '-i',
-          safeVideoName,
-          ...presetFfmpegArgs,
-          ...getFFmpegMetadataArgs(metadata),
-          safeVideoNameWithExtension,
-        );
-      } finally {
-        ffmpegInstance.FS('unlink', safeVideoName);
-      }
-
-      sendFeedback(t('plugins.downloader.backend.feedback.saving'));
-
-      try {
-        return ffmpegInstance.FS('readFile', safeVideoNameWithExtension);
-      } finally {
-        ffmpegInstance.FS('unlink', safeVideoNameWithExtension);
-      }
+      return await runDownloadJob<Uint8Array>(
+        {
+          mode: 'convert',
+          bytes,
+          extension,
+          args: [...presetFfmpegArgs, ...getFFmpegMetadataArgs(metadata)],
+        },
+        getNetFetchAsFetch(win.webContents.session),
+        (ratio) => {
+          sendFeedback(
+            t('plugins.downloader.backend.feedback.conversion-progress', {
+              percent: Math.floor(ratio * 100),
+            }),
+            ratio,
+          );
+          increasePlaylistProgress(0.15 + ratio * 0.85);
+        },
+      );
     } catch (error: unknown) {
       sendError(error as Error, safeVideoName);
     }

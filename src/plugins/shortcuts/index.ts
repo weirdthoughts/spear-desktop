@@ -21,8 +21,8 @@ export default createPlugin({
   description: () => t('plugins.shortcuts.description'),
   restartNeeded: true,
   config: {
-    enabled: false,
-    overrideMediaKeys: false,
+    enabled: true,
+    overrideMediaKeys: true,
     global: {
       previous: '',
       playPause: '',

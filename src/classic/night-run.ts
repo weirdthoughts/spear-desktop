@@ -23,7 +23,7 @@ function openGame() {
   canvas.tabIndex = 0;
   canvas.setAttribute(
     'aria-label',
-    'Stardrift. Collect shapes with your core and trail. Avoid red mines. Hold left mouse or Space and release for a pulse. Escape returns.',
+    'Stardrift. Collect shapes with your core and trail. Avoid red mines. Click left mouse or press Space for a pulse. Escape returns.',
   );
   const status = document.createElement('span');
   status.id = 'status';
@@ -32,11 +32,21 @@ function openGame() {
   score.id = 'score';
   const footer = document.createElement('footer');
   footer.textContent =
-    'Mouse / arrows: move · Hold LMB / Space, release: pulse · Core hits explode; trails clear mines · R: restart · Esc: return ';
+    'Mouse / arrows: move · LMB / Space: pulse · Core hits explode; trails clear mines · R: restart · Esc: return ';
   const meter = document.createElement('progress');
   meter.max = 1;
   meter.setAttribute('aria-label', 'Music pulse');
-  footer.append(meter);
+  const trackProgress = document.createElement('progress');
+  trackProgress.id = 'track-progress';
+  trackProgress.max = 1;
+  trackProgress.setAttribute('aria-label', 'Track progress');
+  const trackTime = document.createElement('span');
+  const progressRow = document.createElement('div');
+  progressRow.style.cssText =
+    'display:flex;align-items:center;gap:12px;margin:10px auto 0;max-width:720px';
+  trackProgress.style.cssText = 'width:auto;flex:1;height:8px';
+  progressRow.append(trackProgress, trackTime);
+  footer.append(meter, progressRow);
   root.append(style, canvas, status, score, footer);
   document.body.append(host);
   document.dispatchEvent(new Event('spear:surface-change'));
@@ -95,6 +105,11 @@ function openGame() {
   resize.observe(host);
   const held = new Set<string>();
   let charging = false;
+  const firePulse = () => {
+    const video = document.querySelector('video');
+    if (activity.visible && video && !video.paused && !video.ended)
+      drive.pulse();
+  };
   const keyup = (event: KeyboardEvent) => {
     held.delete(event.key.toLowerCase());
     if (event.key === ' ') charging = false;
@@ -131,7 +146,7 @@ function openGame() {
       lastBeat = audioMotion.beat;
     } else {
       held.add(key);
-      if (key === ' ') charging = true;
+      if (key === ' ' && !event.repeat) firePulse();
     }
   };
   canvas.onpointermove = (event) => {
@@ -155,7 +170,7 @@ function openGame() {
   };
   canvas.onpointerdown = (event) => {
     if (event.button !== 0) return;
-    charging = true;
+    firePulse();
     if (event.pointerType !== 'touch')
       void canvas.requestPointerLock()?.catch(() => {});
     else canvas.setPointerCapture(event.pointerId);
@@ -276,8 +291,17 @@ function openGame() {
     status.textContent = active
       ? track || 'Stardrift'
       : 'Play music to bring the track to life';
-    score.textContent = `${run.score} pts · ×${Math.min(5, 1 + Math.floor(run.combo / 15))} · ${run.respawn > 0 ? 'Reforming…' : 'Trails ' + drive.trailCount()} · ${run.cooldown > 0 ? 'Pulse ' + run.cooldown.toFixed(1) + 's' : 'Charge ' + Math.round(run.charge * 100) + '%'}`;
+    score.textContent = `${run.score} pts · ×${Math.min(5, 1 + Math.floor(run.combo / 15))} · ${run.respawn > 0 ? 'Reforming…' : 'Trails ' + drive.trailCount()} · ${run.cooldown > 0 ? 'Pulse ' + run.cooldown.toFixed(1) + 's' : 'Pulse ready'}`;
     meter.value = Math.max(audioMotion.bass, audioMotion.energy);
+    const duration = video?.duration ?? 0;
+    const elapsed = video?.currentTime ?? 0;
+    const finiteTrack = Number.isFinite(duration) && duration > 0;
+    trackProgress.value = finiteTrack ? Math.min(1, elapsed / duration) : 0;
+    const formatTime = (n: number) =>
+      `${Math.floor(n / 60)}:${String(Math.floor(n % 60)).padStart(2, '0')}`;
+    trackTime.textContent = finiteTrack
+      ? `${formatTime(elapsed)} / ${formatTime(duration)}`
+      : 'Live';
     pulse = Math.max(0, pulse - dt * 3);
     ctx.fillStyle = '#090b17';
     ctx.fillRect(0, 0, width, height);

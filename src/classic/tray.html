@@ -298,6 +298,36 @@
       #progress {
         width: 100%;
       }
+      .track {
+        position: relative;
+        padding-right: 76px;
+      }
+      .ratings {
+        position: absolute;
+        right: 24px;
+        top: 94px;
+        display: flex;
+        gap: 6px;
+      }
+      .ratings[hidden] {
+        display: none;
+      }
+      .ratings button {
+        width: 32px;
+        height: 32px;
+        padding: 7px;
+      }
+      .ratings svg {
+        width: 18px;
+        height: 18px;
+      }
+      .ratings button[aria-pressed='true'] {
+        color: var(--shell-accent);
+        border-color: var(--shell-accent);
+      }
+      .ratings button:disabled {
+        opacity: 0.4;
+      }
     </style>
   </head>
   <body>
@@ -401,6 +431,30 @@
         <p id="artist">Start your music</p>
       </div>
     </div>
+    <div class="ratings" id="ratings">
+      <button
+        id="like"
+        data-action="like"
+        title="Like"
+        aria-label="Like"
+        aria-pressed="false"
+      >
+        <svg viewBox="0 0 24 24">
+          <path d="M3 10h4v11H3zm6 11V10l5-8 2 1v6h4l2 2-3 10Z" />
+        </svg>
+      </button>
+      <button
+        id="dislike"
+        data-action="dislike"
+        title="Dislike"
+        aria-label="Dislike"
+        aria-pressed="false"
+      >
+        <svg viewBox="0 0 24 24">
+          <path d="M3 3h4v11H3zm6 0v11l5 8 2-1v-6h4l2-2-3-10Z" />
+        </svg>
+      </button>
+    </div>
     <div class="controls">
       <span class="speaker" aria-hidden="true"></span>
       <button
@@ -484,6 +538,16 @@
         refreshing = true;
         try {
           const s = await window.classic.request('song');
+          $('ratings').hidden =
+            s.likeButtons === 'hide' || (!s.likeButtons && !s.canRate);
+          $('like').style.order = s.swapLikes ? '2' : '0';
+          for (const id of ['like', 'dislike']) {
+            $(id).disabled = !s.canRate;
+            $(id).setAttribute(
+              'aria-pressed',
+              String(s.rating === id.toUpperCase()),
+            );
+          }
           $('pin').setAttribute('aria-pressed', String(!!s.trayPinned));
           $('pin')
             .querySelector('path')

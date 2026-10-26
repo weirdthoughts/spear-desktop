@@ -102,6 +102,13 @@ export function createVisualizerStage() {
   sync();
   return {
     container,
+    fullscreen() {
+      if (document.fullscreenElement) return document.exitFullscreen();
+      const target = media
+        ? document.querySelector<HTMLElement>('ytmusic-player')
+        : container;
+      return target?.requestFullscreen();
+    },
     dismissMini() {
       if (mountedPlayer?.getAttribute('player-ui-state') === 'MINIPLAYER')
         mountedPlayer.classList.add('spear-mini-dismissed');

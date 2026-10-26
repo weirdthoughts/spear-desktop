@@ -43,12 +43,12 @@ export function createCollector(onPulse: () => void = () => {}) {
     Math.max(a, Math.min(b, v));
   const radius = () => 6 + Math.sqrt(run.mass) * 3;
   const trailLife = () => Math.min(2.4, 0.22 + run.gathered * 0.045);
-  const trailCount = () => Math.min(3, 1 + Math.floor(run.gathered / 50));
+  const trailCount = () => Math.min(10, 1 + Math.floor(run.gathered / 50));
   const trailPoint = (p: Tail, branch: number): Point => ({
     x:
       p.x +
-      (branch === 0 ? 0 : branch === 1 ? -1 : 1) *
-        Math.min(0.065, p.age * 0.065),
+      (branch === 0 ? 0 : (branch % 2 ? -1 : 1) * Math.ceil(branch / 2)) *
+        Math.min(0.035, p.age * 0.035),
     y: p.y,
   });
   function burst(x: number, y: number, red = false, count = 12) {
@@ -94,7 +94,7 @@ export function createCollector(onPulse: () => void = () => {}) {
     die();
   }
   function release() {
-    if (run.respawn || run.cooldown || run.charge < 0.12) {
+    if (run.respawn || run.cooldown) {
       run.charge = 0;
       return;
     }
@@ -102,9 +102,9 @@ export function createCollector(onPulse: () => void = () => {}) {
       x: run.x,
       y: run.y,
       age: 0,
-      radius: (0.1 + 0.23 * run.charge) * Math.min(width, height),
+      radius: 0.33 * Math.min(width, height),
     });
-    run.cooldown = 1.2 + run.charge * 1.5;
+    run.cooldown = 2.7;
     run.charge = 0;
     onPulse();
   }
@@ -140,7 +140,12 @@ export function createCollector(onPulse: () => void = () => {}) {
       angle: i * 0.6,
     });
     // Red mines are separate, clearly marked, and never occupy a collectible's path.
-    if (i > 5 && i % (complex ? 5 : 9) === 0)
+    if (
+      i > 5 &&
+      i %
+        Math.max(2, (complex ? 5 : 9) - Math.floor((trailCount() - 1) / 2)) ===
+        0
+    )
       run.objects.push({
         x: clamp(x + (x > 0.5 ? -0.32 : 0.32), 0.08, 0.92),
         y: -0.12,
@@ -210,6 +215,7 @@ export function createCollector(onPulse: () => void = () => {}) {
     const speed =
       ((0.33 * clamp(bpm, 70, 170)) / 108) *
       (1 + run.energy * 0.42) *
+      (1 + (trailCount() - 1) * 0.07) *
       (run.slow > 0 ? 0.45 + 0.55 * (1 - run.slow / 2.4) : 1);
     run.speed += (speed - run.speed) * (1 - Math.exp(-dt * 2));
     run.distance += run.speed * dt;
@@ -228,9 +234,7 @@ export function createCollector(onPulse: () => void = () => {}) {
       }
     }
     if (!run.respawn) {
-      if (held && !run.cooldown)
-        run.charge = Math.min(1, run.charge + dt / 1.35);
-      if (run.held && !held) release();
+      if (held && !run.held) release();
     } else run.charge = 0;
     run.held = held;
     for (const w of run.waves) w.age += dt;
@@ -414,5 +418,14 @@ export function createCollector(onPulse: () => void = () => {}) {
     }
   }
   reset();
-  return { run, reset, beat, step, draw, trailCount, trailLife };
+  return {
+    run,
+    reset,
+    beat,
+    step,
+    draw,
+    trailCount,
+    trailLife,
+    pulse: release,
+  };
 }

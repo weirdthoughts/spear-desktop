@@ -140,7 +140,7 @@ test('Spear preferences use local IPC and portable data', async () => {
       0,
     );
     await expect(
-      settings.getByText('Version 3.12.21', { exact: true }),
+      settings.getByText('Version 3.12.22', { exact: true }),
     ).toBeVisible();
     const pin = settings.getByLabel('Always on top', { exact: true });
     const pinButton = player.locator(
@@ -411,7 +411,20 @@ test('Spear preferences use local IPC and portable data', async () => {
     });
     await layout.evaluate(() => {
       window.stage = createVisualizerStage();
+      window.fullscreenTargets = [];
+      for (const id of ['player', 'spear-visualizer-stage'])
+        document.getElementById(id).requestFullscreen = async () => {
+          window.fullscreenTargets.push(id);
+        };
+      window.stage.fullscreen();
+      window.stage.toggleMedia();
+      window.stage.fullscreen();
+      window.stage.toggleMedia();
     });
+    expect(await layout.evaluate(() => window.fullscreenTargets)).toEqual([
+      'spear-visualizer-stage',
+      'player',
+    ]);
     const bounds = (selector) =>
       layout.locator(selector).evaluate((el) => {
         const r = el.getBoundingClientRect();
@@ -574,7 +587,7 @@ test('Spear preferences use local IPC and portable data', async () => {
     const trayPreload = path.join(temporary, 'tray-preview.cjs');
     await fs.writeFile(
       trayPreload,
-      "const {contextBridge}=require('electron');let last;contextBridge.exposeInMainWorld('classic',{lastRequest:()=>last,request:async(action,value)=>{if(action!=='song')last={action,value};return ({title:'A long track title that must stay on one line',artist:'Preview artist',paused:false,elapsed:74,duration:240,artwork:'',palette:{top:'#39346a',bottom:'#1d1b36',accent:'#ffcc66',pixel:true}})}});",
+      "const {contextBridge}=require('electron');let last;contextBridge.exposeInMainWorld('classic',{lastRequest:()=>last,request:async(action,value)=>{if(action!=='song')last={action,value};return ({title:'A long track title that must stay on one line',artist:'Preview artist',paused:false,elapsed:74,duration:240,artwork:'',canRate:true,likeButtons:'force',rating:'LIKE',palette:{top:'#39346a',bottom:'#1d1b36',accent:'#ffcc66',pixel:true}})}});",
     );
     const trayOpened = app.waitForEvent('window');
     await app.evaluate(
@@ -621,6 +634,14 @@ test('Spear preferences use local IPC and portable data', async () => {
     expect(await tray.evaluate(() => window.classic.lastRequest())).toEqual({
       action: 'seek',
       value: 240,
+    });
+    await expect(
+      tray.getByRole('button', { name: 'Like', exact: true }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    await tray.getByRole('button', { name: 'Dislike', exact: true }).click();
+    expect(await tray.evaluate(() => window.classic.lastRequest())).toEqual({
+      action: 'dislike',
+      value: undefined,
     });
     await tray.screenshot({
       path: path.join(root, 'test-results', 'spear-tray.png'),
@@ -1312,10 +1333,10 @@ test('Stardrift collects with its trail, clears mines, penalizes misses and refo
   expect(r.mass).toBe(strengthBeforeMiss);
   expect(r.respawn).toBe(0);
   expect(r.score).toBe(45 - 40 * 15);
-  r.charge = 1;
-  r.held = true;
+  r.held = false;
   r.objects.push(shape(0.6, 0.7, true));
-  game.step(0.01, true, 120, 0.1, false);
+  game.step(0.01, true, 120, 0.1, true);
+  expect(r.waves).toHaveLength(1);
   for (let i = 0; i < 40; i++) game.step(0.016, true, 120, 0.1, false);
   expect(r.objects).toHaveLength(0);
   expect(r.mass).toBeGreaterThan(3);
@@ -1350,6 +1371,8 @@ test('Stardrift collects with its trail, clears mines, penalizes misses and refo
   }
   expect(game.trailCount()).toBe(2);
   expect(game.trailLife()).toBeGreaterThan(2);
+  r.gathered = 10000;
+  expect(game.trailCount()).toBe(10);
   const distance = r.distance;
   game.step(0.5, false, 120, 0.1, false);
   expect(r.distance).toBe(distance);
@@ -1434,5 +1457,56 @@ test('locked configuration survives startup, merges changes, and flushes recover
       .toBe(false);
   } finally {
     locked = false;
+  }
+});
+
+test('download conversion runs in an isolated bundled worker', async () => {
+  const { Worker } = await import('node:worker_threads');
+  const filename = (await fs.readdir(path.join(root, 'dist/main'))).find((n) =>
+    /^worker-.*\.js$/.test(n),
+  );
+  expect(filename).toBeTruthy();
+  const bytes = Buffer.alloc(1644);
+  bytes.write('RIFF');
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  bytes.write('WAVEfmt ', 8);
+  bytes.writeUInt32LE(16, 16);
+  bytes.writeUInt16LE(1, 20);
+  bytes.writeUInt16LE(1, 22);
+  bytes.writeUInt32LE(8000, 24);
+  bytes.writeUInt32LE(16000, 28);
+  bytes.writeUInt16LE(2, 32);
+  bytes.writeUInt16LE(16, 34);
+  bytes.write('data', 36);
+  bytes.writeUInt32LE(1600, 40);
+  const worker = new Worker(path.join(root, 'dist/main', filename), {
+    workerData: {
+      mode: 'convert',
+      bytes,
+      extension: 'wav',
+      args: ['-c:a', 'pcm_s16le'],
+    },
+  });
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('Conversion worker timed out')),
+        20000,
+      );
+      worker.on('error', (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+      worker.on('message', (m) => {
+        if (m.type === 'done' || m.type === 'error') {
+          clearTimeout(timer);
+          m.type === 'done' ? resolve(m.result) : reject(new Error(m.error));
+        }
+      });
+    });
+    expect(Buffer.from(result).subarray(0, 4).toString()).toBe('RIFF');
+    expect(result.length).toBeGreaterThan(1600);
+  } finally {
+    await worker.terminate();
   }
 });

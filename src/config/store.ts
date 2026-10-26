@@ -295,6 +295,10 @@ const migrations = {
   '>=3.12.19'(store: IStore) {
     store.set('options.trayClickPlayPause', false);
   },
+  '>=3.12.22'(store: IStore) {
+    store.set('plugins.shortcuts.enabled', true);
+    store.set('plugins.shortcuts.overrideMediaKeys', true);
+  },
 };
 
 export const store = new Store({
