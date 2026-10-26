@@ -425,6 +425,10 @@ test('Spear preferences use local IPC and portable data', async () => {
       'spear-visualizer-stage',
       'player',
     ]);
+    await layout.evaluate(() => {
+      for (const id of ['player', 'spear-visualizer-stage'])
+        delete document.getElementById(id).requestFullscreen;
+    });
     const bounds = (selector) =>
       layout.locator(selector).evaluate((el) => {
         const r = el.getBoundingClientRect();
